@@ -98,7 +98,7 @@ def _reexec_in_transformers_env():
     cmd = [
         "uv",
         "run",
-        "--native-tls",
+        "--system-certs",
         "--project",
         transformers_project,
         "python",
@@ -169,6 +169,24 @@ def _transcribe_nemo(
     _write_output(output_data, output_file)
 
 
+def _move_inputs_to_model(inputs, torch, device, dtype):
+    """Move Canary processor outputs to the model device/dtype safely.
+
+    BatchFeature.to(device) moves tensors but preserves floating-point dtype.
+    When the model is loaded in FP16 this leaves the acoustic features in
+    FP32, which fails in the FastConformer convolution frontend with
+    "Input type (float) and bias type (c10::Half) should be the same".
+    Cast only floating tensors; token IDs and masks must remain integral.
+    """
+    for key, value in list(inputs.items()):
+        if isinstance(value, torch.Tensor):
+            if value.is_floating_point():
+                inputs[key] = value.to(device=device, dtype=dtype)
+            else:
+                inputs[key] = value.to(device=device)
+    return inputs
+
+
 def _transcribe_transformers(
     audio_path,
     source_lang,
@@ -210,7 +228,8 @@ def _transcribe_transformers(
             source_language=source_lang,
             target_language=target_lang,
             punctuation=preserve_formatting,
-        ).to(device)
+        )
+        inputs = _move_inputs_to_model(inputs, torch, device, dtype)
 
         with torch.inference_mode():
             generated_ids = model.generate(**inputs, max_new_tokens=512)
