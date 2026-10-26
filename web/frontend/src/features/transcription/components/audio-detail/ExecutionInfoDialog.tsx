@@ -156,7 +156,7 @@ function CuratedParamsDisplay({ params }: { params: any }) {
     } else if (params.model_family === 'openai') {
         specificKeys = ['model', 'api_key']; // api_key should ideally be masked or hidden
     } else if (params.model_family === 'nvidia_canary') {
-        specificKeys = ['model']; // Canary usually simpler
+        specificKeys = ['model', 'canary_backend'];
     }
 
     const keysToShow = [...commonKeys, ...specificKeys];

@@ -70,6 +70,7 @@ export interface WhisperXParams {
     print_progress: boolean;
     attention_context_left: number;
     attention_context_right: number;
+    canary_backend: "nemo" | "transformers";
     is_multi_track_enabled: boolean;
     api_key?: string;
     max_new_tokens?: number;
@@ -127,6 +128,7 @@ const DEFAULT_PARAMS: WhisperXParams = {
     print_progress: false,
     attention_context_left: 256,
     attention_context_right: 256,
+    canary_backend: "nemo",
     is_multi_track_enabled: false,
     api_key: "",
 };
@@ -612,6 +614,23 @@ function ParakeetConfig({ params, updateParam, isMultiTrack }: ConfigProps) {
 function CanaryConfig({ params, updateParam, isMultiTrack }: ConfigProps) {
     return (
         <div className="space-y-6">
+            <Section title="Inference Backend" description="Choose how Canary runs for this profile or transcription.">
+                <SelectField
+                    label="Canary Backend"
+                    value={params.canary_backend || "nemo"}
+                    onValueChange={(v) => updateParam('canary_backend', v as WhisperXParams['canary_backend'])}
+                    options={[
+                        { value: "nemo", label: "NeMo (original)" },
+                        { value: "transformers", label: "Transformers (low memory)" },
+                    ]}
+                />
+                {params.canary_backend === "transformers" && (
+                    <InfoBanner variant="info" title="Low-memory Canary">
+                        Uses FP16 and overlapping long-form chunks to fit GPUs such as the RTX 2080. Timestamps are segment-level; speaker diarization remains a separate stage.
+                    </InfoBanner>
+                )}
+            </Section>
+
             <Section title="Language Settings">
                 <SelectField label="Source Language" value={params.language || "en"} onValueChange={(v) => updateParam('language', v)} options={CANARY_LANGUAGES} />
             </Section>

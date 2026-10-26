@@ -655,6 +655,11 @@ definitions:
       callback_url:
         description: Webhook settings
         type: string
+      canary_backend:
+        description: |-
+          NVIDIA Canary inference backend. NeMo remains the default; Transformers
+          provides the lower-memory path for GPUs such as the RTX 2080.
+        type: string
       chunk_size:
         type: integer
       compression_ratio_threshold:

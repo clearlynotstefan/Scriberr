@@ -4804,6 +4804,10 @@ const docTemplate = `{
                     "description": "Webhook settings",
                     "type": "string"
                 },
+                "canary_backend": {
+                    "description": "NVIDIA Canary inference backend. NeMo remains the default; Transformers\nprovides the lower-memory path for GPUs such as the RTX 2080.",
+                    "type": "string"
+                },
                 "chunk_size": {
                     "type": "integer"
                 },

@@ -19,6 +19,12 @@ import (
 //go:embed py/nvidia/*
 var nvidiaScripts embed.FS
 
+const (
+	canaryBackendEnv          = "SCRIBERR_CANARY_BACKEND"
+	canaryBackendNeMo         = "nemo"
+	canaryBackendTransformers = "transformers"
+)
+
 // CanaryAdapter implements the TranscriptionAdapter interface for NVIDIA Canary
 type CanaryAdapter struct {
 	*BaseAdapter
@@ -60,6 +66,15 @@ func NewCanaryAdapter(envPath string) *CanaryAdapter {
 	}
 
 	schema := []interfaces.ParameterSchema{
+		{
+			Name:        "backend",
+			Type:        "string",
+			Required:    false,
+			Default:     canaryBackendNeMo,
+			Options:     []string{canaryBackendNeMo, canaryBackendTransformers},
+			Description: "Inference backend: NeMo for the original timestamp model, or Transformers for lower GPU memory usage",
+			Group:       "basic",
+		},
 		// Language settings
 		{
 			Name:        "source_lang",
@@ -315,6 +330,11 @@ func (c *CanaryAdapter) Transcribe(ctx context.Context, input interfaces.AudioIn
 		return nil, fmt.Errorf("invalid parameters: %w", err)
 	}
 
+	backend := resolveCanaryBackend(params)
+	if backend != canaryBackendNeMo && backend != canaryBackendTransformers {
+		return nil, fmt.Errorf("invalid Canary backend %q", backend)
+	}
+
 	// Create temporary directory
 	tempDir, err := c.CreateTempDirectory(procCtx)
 	if err != nil {
@@ -341,7 +361,8 @@ func (c *CanaryAdapter) Transcribe(ctx context.Context, input interfaces.AudioIn
 
 	// Execute Canary
 	cmd := exec.CommandContext(ctx, "uv", args...)
-	cmd.Env = append(os.Environ(),
+	cmd.Env = setEnvironmentValue(os.Environ(), canaryBackendEnv, backend)
+	cmd.Env = append(cmd.Env,
 		"PYTHONUNBUFFERED=1",
 		"PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True")
 
@@ -384,6 +405,7 @@ func (c *CanaryAdapter) Transcribe(ctx context.Context, input interfaces.AudioIn
 	result.ProcessingTime = time.Since(startTime)
 	result.ModelUsed = "canary-1b-v2"
 	result.Metadata = c.CreateDefaultMetadata(params)
+	result.Metadata["backend"] = backend
 
 	logger.Info("Canary transcription completed",
 		"segments", len(result.Segments),
@@ -392,6 +414,32 @@ func (c *CanaryAdapter) Transcribe(ctx context.Context, input interfaces.AudioIn
 		"task", c.GetStringParameter(params, "task"))
 
 	return result, nil
+}
+
+func resolveCanaryBackend(params map[string]interface{}) string {
+	if value, ok := params["backend"].(string); ok {
+		if backend := strings.TrimSpace(value); backend != "" {
+			return backend
+		}
+	}
+
+	// Preserve compatibility with the experimental deployment and CLI users.
+	if backend := strings.TrimSpace(os.Getenv(canaryBackendEnv)); backend != "" {
+		return backend
+	}
+
+	return canaryBackendNeMo
+}
+
+func setEnvironmentValue(environment []string, key, value string) []string {
+	prefix := key + "="
+	updated := make([]string, 0, len(environment)+1)
+	for _, entry := range environment {
+		if !strings.HasPrefix(entry, prefix) {
+			updated = append(updated, entry)
+		}
+	}
+	return append(updated, prefix+value)
 }
 
 // buildCanaryArgs builds the command arguments for Canary

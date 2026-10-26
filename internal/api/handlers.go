@@ -731,13 +731,14 @@ func (h *Handler) SubmitJob(c *gin.Context) {
 		diarize = getFormBoolWithDefault(c, "diarize", false)
 	}
 	params := models.WhisperXParams{
-		Model:       getFormValueWithDefault(c, "model", "base"),
-		BatchSize:   getFormIntWithDefault(c, "batch_size", 16),
-		ComputeType: getFormValueWithDefault(c, "compute_type", "int8"),
-		Device:      getFormValueWithDefault(c, "device", "cpu"),
-		VadOnset:    getFormFloatWithDefault(c, "vad_onset", 0.500),
-		VadOffset:   getFormFloatWithDefault(c, "vad_offset", 0.363),
-		Diarize:     diarize,
+		Model:         getFormValueWithDefault(c, "model", "base"),
+		BatchSize:     getFormIntWithDefault(c, "batch_size", 16),
+		ComputeType:   getFormValueWithDefault(c, "compute_type", "int8"),
+		Device:        getFormValueWithDefault(c, "device", "cpu"),
+		VadOnset:      getFormFloatWithDefault(c, "vad_onset", 0.500),
+		VadOffset:     getFormFloatWithDefault(c, "vad_offset", 0.363),
+		Diarize:       diarize,
+		CanaryBackend: "nemo",
 	}
 
 	if lang := c.PostForm("language"); lang != "" {
@@ -1056,6 +1057,7 @@ func (h *Handler) getValidatedTranscriptionParams(c *gin.Context, job *models.Tr
 	// Set defaults
 	requestParams := models.WhisperXParams{
 		ModelFamily:                    "whisper", // Default to whisper for backward compatibility
+		CanaryBackend:                  "nemo",
 		Model:                          "small",
 		ModelCacheOnly:                 false,
 		Device:                         "cpu",
@@ -2465,6 +2467,7 @@ func (h *Handler) SubmitQuickTranscription(c *gin.Context) {
 			// Model parameters
 			Model:          "small",
 			ModelCacheOnly: false,
+			CanaryBackend:  "nemo",
 
 			// Device and computation
 			Device:      "cpu",

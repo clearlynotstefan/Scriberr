@@ -625,11 +625,17 @@ func (u *UnifiedTranscriptionService) convertToParakeetParams(params models.Whis
 
 // convertToCanaryParams converts to Canary-specific parameters
 func (u *UnifiedTranscriptionService) convertToCanaryParams(params models.WhisperXParams) map[string]interface{} {
+	backend := params.CanaryBackend
+	if backend == "" {
+		backend = "nemo"
+	}
+
 	paramMap := map[string]interface{}{
 		"timestamps":         true,
 		"output_format":      OutputFormatJSON,
 		"auto_convert_audio": true,
 		"task":               params.Task,
+		"backend":            backend,
 	}
 
 	// Set source language

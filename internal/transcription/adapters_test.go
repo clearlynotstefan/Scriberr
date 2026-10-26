@@ -336,10 +336,18 @@ func TestCanaryAdapter(t *testing.T) {
 		"source_lang": "en",
 		"target_lang": "es",
 		"task":        "translate",
+		"backend":     "transformers",
 	}
 
 	if err := adapter.ValidateParameters(validParams); err != nil {
 		t.Errorf("Valid parameters failed validation: %v", err)
+	}
+
+	invalidParams := map[string]interface{}{
+		"backend": "unknown",
+	}
+	if err := adapter.ValidateParameters(invalidParams); err == nil {
+		t.Error("Unsupported Canary backend should fail validation")
 	}
 }
 
@@ -528,6 +536,29 @@ func TestParameterConversion(t *testing.T) {
 
 	if paramMap["diarize"] != true {
 		t.Errorf("Expected diarize true, got '%v'", paramMap["diarize"])
+	}
+}
+
+func TestCanaryBackendParameterConversion(t *testing.T) {
+	mockRepo := new(MockJobRepository)
+	service := NewUnifiedTranscriptionService(mockRepo, "data/temp", "data/transcripts")
+
+	params := models.WhisperXParams{
+		ModelFamily:   "nvidia_canary",
+		CanaryBackend: "transformers",
+		Task:          "transcribe",
+		Language:      stringPtr("en"),
+	}
+
+	paramMap := service.convertToCanaryParams(params)
+	if paramMap["backend"] != "transformers" {
+		t.Errorf("Expected Transformers backend, got '%v'", paramMap["backend"])
+	}
+
+	params.CanaryBackend = ""
+	paramMap = service.convertToCanaryParams(params)
+	if paramMap["backend"] != "nemo" {
+		t.Errorf("Expected NeMo to remain the default backend, got '%v'", paramMap["backend"])
 	}
 }
 

@@ -120,6 +120,10 @@ type WhisperXParams struct {
 	AttentionContextLeft  int `json:"attention_context_left" gorm:"type:int;default:256"`
 	AttentionContextRight int `json:"attention_context_right" gorm:"type:int;default:256"`
 
+	// NVIDIA Canary inference backend. NeMo remains the default; Transformers
+	// provides the lower-memory path for GPUs such as the RTX 2080.
+	CanaryBackend string `json:"canary_backend" gorm:"type:varchar(20);default:'nemo'"`
+
 	// Multi-track transcription settings
 	IsMultiTrackEnabled bool `json:"is_multi_track_enabled" gorm:"type:boolean;default:false"`
 
