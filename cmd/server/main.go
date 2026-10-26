@@ -222,12 +222,14 @@ func registerAdapters(cfg *config.Config) {
 	// Shared environment path for NVIDIA models (NeMo-based)
 	nvidiaEnvPath := filepath.Join(cfg.WhisperXEnv, "parakeet")
 
-	// Test-only mode used by docker-compose.canary-test.yml. Keeping this
-	// deliberately narrow prevents the experimental container from preparing or
-	// mutating unrelated model environments while Canary is being validated.
+	// Test-only mode used by docker-compose.canary-test.yml. Keep Canary's
+	// lightweight Transformers launcher isolated from the NeMo environment that
+	// Sortformer needs for the optional diarization stage.
 	if os.Getenv("SCRIBERR_CANARY_TEST_ONLY") == "1" {
 		registry.RegisterTranscriptionAdapter("canary", adapters.NewCanaryTransformersTestAdapter(nvidiaEnvPath))
-		logger.Info("Adapter registration complete", "mode", "canary-test-only")
+		registry.RegisterDiarizationAdapter("sortformer",
+			adapters.NewSortformerAdapter(filepath.Join(cfg.WhisperXEnv, "sortformer")))
+		logger.Info("Adapter registration complete", "mode", "canary-test-only", "diarization", "sortformer")
 		return
 	}
 

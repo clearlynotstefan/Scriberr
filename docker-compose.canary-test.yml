@@ -16,8 +16,9 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - SECURE_COOKIES=false
 
-      # Canary experiment controls. Do not register/initialize the other local
-      # model adapters in this test container.
+      # Canary experiment controls. Register only the low-memory Canary path
+      # and Sortformer, which is needed when test profiles request diarization.
+      # Their Python environments remain separate under the models mount.
       - SCRIBERR_CANARY_BACKEND=transformers
       - SCRIBERR_CANARY_TEST_ONLY=1
 
