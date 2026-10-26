@@ -20,33 +20,25 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      # Unraid normally owns appdata as nobody:users (99:100). These can still
-      # be overridden from the shell/environment if your production container
-      # uses different numeric IDs.
       - PUID=${PUID:-99}
       - PGID=${PGID:-100}
       - APP_ENV=production
       - SCRIBERR_CANARY_BACKEND=transformers
-      # Test harness guard: register and initialize Canary only, so this
-      # experimental instance does not touch WhisperX/Parakeet/Sortformer/etc.
       - SCRIBERR_CANARY_TEST_ONLY=1
       - HF_HOME=/root/.cache/huggingface
       - HUGGINGFACE_HUB_CACHE=/root/.cache/huggingface/hub
     volumes:
-      # Keep the experimental Scriberr app state completely separate.
+      # Completely separate experimental application state.
       - /mnt/user/appdata/scriberr-canary-test/data:/app/data
       - /mnt/user/appdata/scriberr-canary-test/home:/home
 
-      # Reuse the production NVIDIA model/environment tree so the existing
-      # Canary/NeMo files do not need to be downloaded again. In test-only mode
-      # Scriberr registers Canary and no other local model adapter.
-      - /mnt/user/appdata/scriberr/models:/app/whisperx-env
+      # Completely separate Python/model environment. The test-only Canary
+      # adapter does not install NeMo or download canary-1b-v2.nemo.
+      - /mnt/user/appdata/scriberr-canary-test/models:/app/whisperx-env
 
-      # Reuse the production cache. The Transformers Canary weights are cached
-      # here on first download and are then reusable across containers/rebuilds.
+      # Share only the download/cache tree. Transformers Canary safetensors are
+      # downloaded once here and can be reused across rebuilds/containers.
       - /mnt/user/appdata/scriberr/cache:/root/.cache
 
-      # Intentionally DO NOT mount /mnt/user/Transcriptions_Input here. Running
-      # two watch-folder consumers against the same directory would duplicate
-      # ingestion during testing.
+      # Deliberately no watch-folder mount during testing.
     restart: unless-stopped
