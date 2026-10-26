@@ -6,7 +6,7 @@ services:
     image: scriberr:canary-transformers-test
     container_name: scriberr-canary-test
     ports:
-      - "8181:8080"
+      - "8182:8080"
     deploy:
       resources:
         reservations:
