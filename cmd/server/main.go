@@ -222,6 +222,15 @@ func registerAdapters(cfg *config.Config) {
 	// Shared environment path for NVIDIA models (NeMo-based)
 	nvidiaEnvPath := filepath.Join(cfg.WhisperXEnv, "parakeet")
 
+	// Test-only mode used by docker-compose.canary-test.yml. Keeping this
+	// deliberately narrow prevents the experimental container from preparing or
+	// mutating unrelated model environments while Canary is being validated.
+	if os.Getenv("SCRIBERR_CANARY_TEST_ONLY") == "1" {
+		registry.RegisterTranscriptionAdapter("canary", adapters.NewCanaryAdapter(nvidiaEnvPath))
+		logger.Info("Adapter registration complete", "mode", "canary-test-only")
+		return
+	}
+
 	// Dedicated environment path for PyAnnote (to avoid dependency conflicts)
 	pyannoteEnvPath := filepath.Join(cfg.WhisperXEnv, "pyannote")
 
