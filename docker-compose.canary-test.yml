@@ -22,15 +22,23 @@ services:
       - PGID=${PGID:-1000}
       - APP_ENV=production
       - SCRIBERR_CANARY_BACKEND=transformers
-      - HF_HOME=/app/whisperx-env/hf-cache
-      - HUGGINGFACE_HUB_CACHE=/app/whisperx-env/hf-cache/hub
+      - HF_HOME=/root/.cache/huggingface
+      - HUGGINGFACE_HUB_CACHE=/root/.cache/huggingface/hub
     volumes:
-      # Separate Scriberr database/uploads so the test instance cannot modify
-      # the production application's state.
-      - ./scriberr_data_canary_test:/app/data
+      # Keep the experimental Scriberr app state completely separate.
+      - /mnt/user/appdata/scriberr-canary-test/data:/app/data
+      - /mnt/user/appdata/scriberr-canary-test/home:/home
 
-      # Intentionally shared with the normal CUDA compose file. Existing NeMo,
-      # Parakeet and Sortformer files are reused. The Transformers Canary env
-      # and Hugging Face weights are cached in sibling directories here.
-      - ./env-data:/app/whisperx-env
+      # Reuse the exact model/environment tree used by the production Scriberr
+      # container so existing NeMo, Parakeet, Sortformer, and Canary files do
+      # not need to be downloaded again.
+      - /mnt/user/appdata/scriberr/models:/app/whisperx-env
+
+      # Reuse the production cache. The Transformers Canary weights are cached
+      # here on first download and are then reusable across containers/rebuilds.
+      - /mnt/user/appdata/scriberr/cache:/root/.cache
+
+      # Intentionally DO NOT mount /mnt/user/Transcriptions_Input here. Running
+      # two watch-folder consumers against the same directory would duplicate
+      # ingestion during testing.
     restart: unless-stopped
