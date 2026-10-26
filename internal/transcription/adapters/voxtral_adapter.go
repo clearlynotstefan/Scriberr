@@ -160,7 +160,7 @@ func (v *VoxtralAdapter) setupVoxtralEnvironment() error {
 
 	// Run uv sync
 	logger.Info("Installing Voxtral dependencies")
-	cmd := exec.Command("uv", "sync", "--native-tls")
+	cmd := exec.Command("uv", "sync", "--system-certs")
 	cmd.Dir = v.envPath
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -298,7 +298,7 @@ func (v *VoxtralAdapter) buildVoxtralArgs(input interfaces.AudioInput, params ma
 	}
 
 	args := []string{
-		"run", "--native-tls", "--project", v.envPath, "python", scriptPath,
+		"run", "--system-certs", "--project", v.envPath, "python", scriptPath,
 		input.FilePath,
 		outputFile,
 	}

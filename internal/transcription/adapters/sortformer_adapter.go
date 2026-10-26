@@ -217,7 +217,7 @@ func (s *SortformerAdapter) setupSortformerEnvironment() error {
 
 	// Run uv sync
 	logger.Info("Installing Sortformer dependencies")
-	cmd := exec.Command("uv", "sync", "--native-tls")
+	cmd := exec.Command("uv", "sync", "--system-certs")
 	cmd.Dir = s.envPath
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -385,7 +385,7 @@ func (s *SortformerAdapter) buildSortformerArgs(input interfaces.AudioInput, par
 
 	scriptPath := filepath.Join(s.envPath, "sortformer_diarize.py")
 	args := []string{
-		"run", "--native-tls", "--project", s.envPath, "python", scriptPath,
+		"run", "--system-certs", "--project", s.envPath, "python", scriptPath,
 		input.FilePath,
 		outputFile,
 	}

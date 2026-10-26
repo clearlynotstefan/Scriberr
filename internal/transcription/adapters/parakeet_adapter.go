@@ -201,7 +201,7 @@ func (p *ParakeetAdapter) setupParakeetEnvironment() error {
 
 	// Run uv sync
 	logger.Info("Installing Parakeet dependencies")
-	cmd := exec.Command("uv", "sync", "--native-tls")
+	cmd := exec.Command("uv", "sync", "--system-certs")
 	cmd.Dir = p.envPath
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -479,7 +479,7 @@ func (p *ParakeetAdapter) buildParakeetArgs(input interfaces.AudioInput, params 
 
 	scriptPath := filepath.Join(p.envPath, "parakeet_transcribe.py")
 	args := []string{
-		"run", "--native-tls", "--project", p.envPath, "python", scriptPath,
+		"run", "--system-certs", "--project", p.envPath, "python", scriptPath,
 		input.FilePath,
 		"--output", outputFile,
 	}
@@ -595,7 +595,7 @@ func (p *ParakeetAdapter) buildBufferedArgs(input interfaces.AudioInput, params 
 
 	scriptPath := filepath.Join(p.envPath, "parakeet_transcribe_buffered.py")
 	args := []string{
-		"run", "--native-tls", "--project", p.envPath, "python", scriptPath,
+		"run", "--system-certs", "--project", p.envPath, "python", scriptPath,
 		input.FilePath,
 		"--output", outputFile,
 		"--chunk-len", chunkDuration,

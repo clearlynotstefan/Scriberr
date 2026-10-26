@@ -204,7 +204,7 @@ func (p *PyAnnoteAdapter) PrepareEnvironment(ctx context.Context) error {
 	}
 
 	// Verify PyAnnote is now available
-	testCmd := exec.Command("uv", "run", "--native-tls", "--project", p.envPath, "python", "-c", "from pyannote.audio import Pipeline")
+	testCmd := exec.Command("uv", "run", "--system-certs", "--project", p.envPath, "python", "-c", "from pyannote.audio import Pipeline")
 	if testCmd.Run() != nil {
 		logger.Warn("PyAnnote environment test still failed after setup")
 	}
@@ -242,7 +242,7 @@ func (p *PyAnnoteAdapter) setupPyAnnoteEnvironment() error {
 
 	// Run uv sync
 	logger.Info("Installing PyAnnote dependencies")
-	cmd := exec.Command("uv", "sync", "--native-tls")
+	cmd := exec.Command("uv", "sync", "--system-certs")
 	cmd.Dir = p.envPath
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -376,7 +376,7 @@ func (p *PyAnnoteAdapter) buildPyAnnoteArgs(input interfaces.AudioInput, params 
 
 	scriptPath := filepath.Join(p.envPath, "pyannote_diarize.py")
 	args := []string{
-		"run", "--native-tls", "--project", p.envPath, "python", scriptPath,
+		"run", "--system-certs", "--project", p.envPath, "python", scriptPath,
 		input.FilePath,
 		"--output", outputFile,
 		"--hf-token", p.GetStringParameter(params, "hf_token"),
