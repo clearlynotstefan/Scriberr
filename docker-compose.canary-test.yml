@@ -1,0 +1,36 @@
+services:
+  scriberr-canary-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda
+    image: scriberr:canary-transformers-test
+    container_name: scriberr-canary-test
+    ports:
+      - "8181:8080"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities:
+                - gpu
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - APP_ENV=production
+      - SCRIBERR_CANARY_BACKEND=transformers
+      - HF_HOME=/app/whisperx-env/hf-cache
+      - HUGGINGFACE_HUB_CACHE=/app/whisperx-env/hf-cache/hub
+    volumes:
+      # Separate Scriberr database/uploads so the test instance cannot modify
+      # the production application's state.
+      - ./scriberr_data_canary_test:/app/data
+
+      # Intentionally shared with the normal CUDA compose file. Existing NeMo,
+      # Parakeet and Sortformer files are reused. The Transformers Canary env
+      # and Hugging Face weights are cached in sibling directories here.
+      - ./env-data:/app/whisperx-env
+    restart: unless-stopped
