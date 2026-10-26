@@ -5,6 +5,12 @@ description = "Audio transcription and diarization using NVIDIA models (Canary, 
 requires-python = ">=3.11"
 dependencies = [
     "nemo-toolkit[asr]",
+    # NeMo 2.5.x ASR can reach nemo.lightning while importing Sortformer, but
+    # its ASR extra omits this dependency. Match NVIDIA's NeMo 2.5 stack.
+    "megatron-core==0.14.0",
+    # NeMo 2.5.3 was developed against the 4.53 Transformers line. Pin the
+    # patch release so a persistent runtime environment stays reproducible.
+    "transformers==4.53.3",
     "torch",
     "torchaudio",
     "librosa",

@@ -157,8 +157,11 @@ func (s *SortformerAdapter) PrepareEnvironment(ctx context.Context) error {
 		return fmt.Errorf("failed to copy diarization script: %w", err)
 	}
 
-	// Check if environment is already ready (using cache to speed up repeated checks)
-	if CheckEnvironmentReady(s.envPath, "from nemo.collections.asr.models import SortformerEncLabelModel") {
+	// Check if environment is already ready (using cache to speed up repeated checks).
+	// A failed import must trigger a sync even when pyproject.toml already exists: uv
+	// environments persist across container upgrades and can otherwise remain broken.
+	importReady := CheckEnvironmentReady(s.envPath, "from nemo.collections.asr.models import SortformerEncLabelModel")
+	if importReady {
 		modelPath := filepath.Join(s.envPath, "diar_streaming_sortformer_4spk-v2.nemo")
 		if stat, err := os.Stat(modelPath); err == nil && stat.Size() > 1024*1024 {
 			scriptPath := filepath.Join(s.envPath, "sortformer_diarize.py")
@@ -170,12 +173,15 @@ func (s *SortformerAdapter) PrepareEnvironment(ctx context.Context) error {
 		}
 	}
 
-	// Check if the shared environment exists (created by other NVIDIA adapters)
+	// Create or repair the environment. Merely finding pyproject.toml is not proof
+	// that its resolved dependencies can import Sortformer.
 	pyprojectPath := filepath.Join(s.envPath, "pyproject.toml")
-	if _, err := os.Stat(pyprojectPath); err != nil {
-		// Create environment if it doesn't exist
+	if _, err := os.Stat(pyprojectPath); err != nil || !importReady {
 		if err := s.setupSortformerEnvironment(); err != nil {
 			return fmt.Errorf("failed to setup Sortformer environment: %w", err)
+		}
+		if err := s.verifySortformerEnvironment(); err != nil {
+			return fmt.Errorf("Sortformer dependency verification failed: %w", err)
 		}
 	}
 
@@ -186,6 +192,22 @@ func (s *SortformerAdapter) PrepareEnvironment(ctx context.Context) error {
 
 	s.initialized = true
 	logger.Info("Sortformer environment prepared successfully")
+	return nil
+}
+
+// verifySortformerEnvironment performs an uncached import after uv sync. The
+// general readiness helper intentionally caches failures for a process lifetime,
+// so it cannot be used to verify an environment that was repaired moments ago.
+func (s *SortformerAdapter) verifySortformerEnvironment() error {
+	cmd := exec.Command(
+		"uv", "run", "--system-certs", "--project", s.envPath,
+		"python", "-c", "from nemo.collections.asr.models import SortformerEncLabelModel",
+	)
+	cmd.Dir = s.envPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("NeMo Sortformer import failed: %w: %s", err, strings.TrimSpace(string(out)))
+	}
 	return nil
 }
 
