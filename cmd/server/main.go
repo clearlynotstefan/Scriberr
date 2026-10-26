@@ -226,7 +226,7 @@ func registerAdapters(cfg *config.Config) {
 	// deliberately narrow prevents the experimental container from preparing or
 	// mutating unrelated model environments while Canary is being validated.
 	if os.Getenv("SCRIBERR_CANARY_TEST_ONLY") == "1" {
-		registry.RegisterTranscriptionAdapter("canary", adapters.NewCanaryAdapter(nvidiaEnvPath))
+		registry.RegisterTranscriptionAdapter("canary", adapters.NewCanaryTransformersTestAdapter(nvidiaEnvPath))
 		logger.Info("Adapter registration complete", "mode", "canary-test-only")
 		return
 	}
