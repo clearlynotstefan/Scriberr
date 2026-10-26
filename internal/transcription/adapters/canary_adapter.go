@@ -345,8 +345,10 @@ func (c *CanaryAdapter) Transcribe(ctx context.Context, input interfaces.AudioIn
 		"PYTHONUNBUFFERED=1",
 		"PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True")
 
-	// Setup log file
-	logFile, err := os.OpenFile(filepath.Join(procCtx.OutputDirectory, "transcription.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// Start each Canary attempt with a clean log. Downstream stages such as
+	// Sortformer open the same file in append mode, so their output still follows
+	// this transcription without stale output from an earlier retry.
+	logFile, err := os.OpenFile(filepath.Join(procCtx.OutputDirectory, "transcription.log"), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
 		logger.Warn("Failed to create log file", "error", err)
 	} else {
