@@ -25,6 +25,9 @@ services:
       - PGID=${PGID:-100}
       - APP_ENV=production
       - SCRIBERR_CANARY_BACKEND=transformers
+      # Test harness guard: register and initialize Canary only, so this
+      # experimental instance does not touch WhisperX/Parakeet/Sortformer/etc.
+      - SCRIBERR_CANARY_TEST_ONLY=1
       - HF_HOME=/root/.cache/huggingface
       - HUGGINGFACE_HUB_CACHE=/root/.cache/huggingface/hub
     volumes:
@@ -32,9 +35,9 @@ services:
       - /mnt/user/appdata/scriberr-canary-test/data:/app/data
       - /mnt/user/appdata/scriberr-canary-test/home:/home
 
-      # Reuse the exact model/environment tree used by the production Scriberr
-      # container so existing NeMo, Parakeet, Sortformer, and Canary files do
-      # not need to be downloaded again.
+      # Reuse the production NVIDIA model/environment tree so the existing
+      # Canary/NeMo files do not need to be downloaded again. In test-only mode
+      # Scriberr registers Canary and no other local model adapter.
       - /mnt/user/appdata/scriberr/models:/app/whisperx-env
 
       # Reuse the production cache. The Transformers Canary weights are cached
