@@ -62,6 +62,10 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     // Fetch transcript & speakers here to support menu actions
     const { data: transcript } = useTranscript(audioId || "", true);
     const { data: speakerMappings = {} } = useSpeakerMappings(audioId || "", true);
+    const hasTimelineData = Boolean(
+        (transcript?.word_segments && transcript.word_segments.length > 0) ||
+        (transcript?.segments && transcript.segments.length > 0)
+    );
 
     // Download Logic
     const { downloadSRT } = useTranscriptDownload();
@@ -297,8 +301,8 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                                 </DropdownMenuTrigger>
                                                 <DropdownMenuContent align="end" className="w-56 glass-card rounded-[var(--radius-card)] shadow-[var(--shadow-float)] border-[var(--border-subtle)] p-1.5">
                                                     {/* ... (Menu Items same as before, update handlers) ... */}
-                                                    {/* Only show timeline view toggle if transcript has word-level timestamps */}
-                                                    {transcript?.word_segments && transcript.word_segments.length > 0 ? (
+                                                    {/* Word timestamps enable karaoke highlighting; segment timestamps still support a timeline. */}
+                                                    {hasTimelineData ? (
                                                         <DropdownMenuItem onClick={() => setTranscriptMode(transcriptMode === 'compact' ? 'expanded' : 'compact')} className="rounded-[8px] cursor-pointer">
                                                             {transcriptMode === 'compact' ? <List className="mr-2 h-4 w-4 opacity-70" /> : <AlignLeft className="mr-2 h-4 w-4 opacity-70" />}
                                                             {transcriptMode === 'compact' ? 'Timeline View' : 'Compact View'}

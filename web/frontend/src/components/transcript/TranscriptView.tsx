@@ -124,11 +124,19 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
 
     // 1. Precompute per-segment text and offsets
     const expandedData = useMemo(() => {
-        if (!transcript?.segments || !transcript.word_segments) return [];
+        if (!transcript?.segments) return [];
 
         return transcript.segments.map((segment) => {
+            if (!transcript.word_segments?.length) {
+                return {
+                    ...segment,
+                    fullText: segment.text,
+                    offsets: []
+                };
+            }
+
             // Filter words belonging to this segment
-            const segmentWords = transcript.word_segments!.filter(
+            const segmentWords = transcript.word_segments.filter(
                 word => word.start >= segment.start - 0.1 && word.end <= segment.end + 0.1
             );
 
@@ -301,9 +309,14 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
                     >
                         {/* Timestamp & Speaker */}
                         <div className="flex-shrink-0 w-24 sm:w-28 flex flex-col items-start sm:items-end gap-1 text-xs text-carbon-500 dark:text-carbon-400 select-none mt-1">
-                            <span className="font-mono bg-carbon-100 dark:bg-carbon-800/80 px-1.5 py-0.5 rounded text-[10px] sm:text-xs">
+                            <button
+                                type="button"
+                                onClick={() => onSeek(segment.start)}
+                                className="font-mono bg-carbon-100 dark:bg-carbon-800/80 px-1.5 py-0.5 rounded text-[10px] sm:text-xs hover:text-[var(--brand-solid)] transition-colors"
+                                title="Jump to this timestamp"
+                            >
                                 {new Date(segment.start * 1000).toISOString().substr(11, 8)}
-                            </span>
+                            </button>
                             {segment.speaker && (
                                 <span
                                     className="font-medium text-carbon-700 dark:text-carbon-300 truncate max-w-full"
