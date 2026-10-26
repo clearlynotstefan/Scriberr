@@ -8,13 +8,15 @@ import argparse
 import json
 import sys
 import os
+import traceback
 from pathlib import Path
 import torch
 
 try:
     from nemo.collections.asr.models import SortformerEncLabelModel
-except ImportError:
-    print("Error: NeMo not found. Please install nemo_toolkit[asr]")
+except ImportError as exc:
+    print(f"Error importing NeMo Sortformer: {exc}", file=sys.stderr)
+    traceback.print_exc()
     sys.exit(1)
 
 
