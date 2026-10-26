@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 # Paths
@@ -54,8 +55,108 @@ def test_transformers_backend_reexecs_in_isolated_env(monkeypatch, tmp_path):
     transformers_project = nvidia_project / "canary-transformers"
     assert (transformers_project / "pyproject.toml").exists()
     assert str(transformers_project) in captured["cmd"]
+    assert "--system-certs" in captured["cmd"]
+    assert "--native-tls" not in captured["cmd"]
     assert captured["env"]["SCRIBERR_CANARY_TRANSFORMERS_CHILD"] == "1"
     assert captured["env"]["HF_HOME"] == str(nvidia_project / "hf-cache")
+
+
+def test_transformers_chunk_plan_uses_quiet_boundaries_and_overlap():
+    module = load_canary_module()
+    sample_rate = 100
+    audio = np.ones(75 * sample_rate, dtype=np.float32)
+    audio[2850:2870] = 0.0
+
+    chunks = module._plan_transformers_chunks(
+        audio,
+        sample_rate=sample_rate,
+        max_chunk_seconds=30,
+        overlap_seconds=1,
+        boundary_search_seconds=2,
+        min_chunk_seconds=10,
+    )
+
+    assert 2850 <= chunks[0][1] <= 2870
+    assert chunks[1][0] == chunks[0][1] - sample_rate
+    assert all(
+        current[0] == previous[1] - sample_rate
+        for previous, current in zip(chunks, chunks[1:])
+    )
+    assert chunks[-1][1] == len(audio)
+    assert all(end > start for start, end in chunks)
+    assert all(end - start <= 30 * sample_rate for start, end in chunks)
+
+
+def test_transformers_chunk_merge_deduplicates_overlap_and_preserves_empty_chunks():
+    module = load_canary_module()
+    chunk_ranges = [
+        (0, 30 * module.SAMPLE_RATE),
+        (29 * module.SAMPLE_RATE, 59 * module.SAMPLE_RATE),
+        (58 * module.SAMPLE_RATE, 75 * module.SAMPLE_RATE),
+    ]
+    decoded_chunks = [
+        "Hello, brave new world.",
+        "NEW world! This continues.",
+        "",
+    ]
+
+    text, segments = module._assemble_transformers_chunks(
+        decoded_chunks,
+        chunk_ranges,
+        total_samples=75 * module.SAMPLE_RATE,
+    )
+
+    assert text == "Hello, brave new world. This continues."
+    assert len(segments) == 3
+    assert segments[-1]["segment"] == ""
+    assert segments[0]["start_offset"] == 0
+    assert segments[-1]["end_offset"] == 75 * module.SAMPLE_RATE
+    assert all(
+        previous["end_offset"] == current["start_offset"]
+        for previous, current in zip(segments, segments[1:])
+    )
+
+
+def test_transformers_generation_has_loop_guards():
+    module = load_canary_module()
+
+    assert module.TRANSFORMERS_GENERATION_KWARGS["do_sample"] is False
+    assert module.TRANSFORMERS_GENERATION_KWARGS["repetition_penalty"] > 1.0
+    assert module.TRANSFORMERS_GENERATION_KWARGS["no_repeat_ngram_size"] > 0
+    assert module.TRANSFORMERS_GENERATION_KWARGS["renormalize_logits"] is True
+
+
+def test_transformers_inputs_keep_integer_tensors_and_cast_floats_to_fp16():
+    module = load_canary_module()
+
+    class FakeTensor:
+        def __init__(self, floating):
+            self.floating = floating
+            self.move = None
+
+        def is_floating_point(self):
+            return self.floating
+
+        def to(self, **kwargs):
+            self.move = kwargs
+            return self
+
+    class FakeTorch:
+        Tensor = FakeTensor
+
+    features = FakeTensor(floating=True)
+    token_ids = FakeTensor(floating=False)
+    inputs = {"input_features": features, "input_ids": token_ids}
+
+    module._move_inputs_to_model(
+        inputs,
+        torch=FakeTorch,
+        device="cuda",
+        dtype="float16",
+    )
+
+    assert features.move == {"device": "cuda", "dtype": "float16"}
+    assert token_ids.move == {"device": "cuda"}
 
 
 def test_transformers_child_dispatches_without_nemo(monkeypatch):

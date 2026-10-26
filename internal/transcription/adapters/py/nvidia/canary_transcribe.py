@@ -11,12 +11,25 @@ coarse chunk-level segment timestamps, not NeMo NFA word timestamps.
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 
 MODEL_ID = "nvidia/canary-1b-v2"
 SAMPLE_RATE = 16000
-TRANSFORMERS_CHUNK_SECONDS = 30.0
+TRANSFORMERS_MAX_CHUNK_SECONDS = 30.0
+TRANSFORMERS_CHUNK_OVERLAP_SECONDS = 1.0
+TRANSFORMERS_BOUNDARY_SEARCH_SECONDS = 2.0
+TRANSFORMERS_MIN_CHUNK_SECONDS = 10.0
+TRANSFORMERS_BOUNDARY_FRAME_SECONDS = 0.02
+TRANSFORMERS_GENERATION_KWARGS = {
+    "max_new_tokens": 512,
+    "do_sample": False,
+    "num_beams": 1,
+    "repetition_penalty": 1.1,
+    "no_repeat_ngram_size": 6,
+    "renormalize_logits": True,
+}
 _TRANSFORMERS_CHILD_ENV = "SCRIBERR_CANARY_TRANSFORMERS_CHILD"
 
 _TRANSFORMERS_PYPROJECT = r'''[project]
@@ -187,6 +200,146 @@ def _move_inputs_to_model(inputs, torch, device, dtype):
     return inputs
 
 
+def _quietest_boundary(audio, target, lower, upper, frame_samples):
+    """Choose a low-energy split point, preferring one close to the target."""
+    half_frame = max(1, frame_samples // 2)
+    first = max(lower, half_frame)
+    last = min(upper, len(audio) - half_frame)
+    if first >= last:
+        return target
+
+    candidates = range(first, last + 1, max(1, frame_samples))
+
+    def boundary_score(sample):
+        frame = audio[sample - half_frame : sample + half_frame]
+        energy = float((frame * frame).mean()) if len(frame) else float("inf")
+        return energy, abs(target - sample)
+
+    return min(candidates, key=boundary_score)
+
+
+def _plan_transformers_chunks(
+    audio,
+    sample_rate=SAMPLE_RATE,
+    max_chunk_seconds=TRANSFORMERS_MAX_CHUNK_SECONDS,
+    overlap_seconds=TRANSFORMERS_CHUNK_OVERLAP_SECONDS,
+    boundary_search_seconds=TRANSFORMERS_BOUNDARY_SEARCH_SECONDS,
+    min_chunk_seconds=TRANSFORMERS_MIN_CHUNK_SECONDS,
+):
+    """Plan bounded, silence-aware chunks with acoustic overlap.
+
+    Chunk ends move backwards by at most ``boundary_search_seconds`` to a
+    quiet frame. The next chunk starts one second before that boundary, which
+    gives Canary context on both sides without increasing peak GPU memory.
+    """
+    total_samples = len(audio)
+    if total_samples == 0:
+        return []
+
+    max_samples = max(1, int(max_chunk_seconds * sample_rate))
+    overlap_samples = max(0, int(overlap_seconds * sample_rate))
+    search_samples = max(0, int(boundary_search_seconds * sample_rate))
+    min_samples = max(1, int(min_chunk_seconds * sample_rate))
+    frame_samples = max(1, int(TRANSFORMERS_BOUNDARY_FRAME_SECONDS * sample_rate))
+
+    if overlap_samples >= max_samples:
+        raise ValueError("Canary chunk overlap must be shorter than the chunk")
+
+    chunks = []
+    start = 0
+    while start < total_samples:
+        target_end = min(total_samples, start + max_samples)
+
+        if target_end == total_samples:
+            chunks.append((start, total_samples))
+            break
+
+        lower = max(start + min_samples, target_end - search_samples)
+        end = _quietest_boundary(
+            audio,
+            target=target_end,
+            lower=lower,
+            upper=target_end,
+            frame_samples=frame_samples,
+        )
+        if end <= start + overlap_samples:
+            end = target_end
+
+        chunks.append((start, end))
+        next_start = end - overlap_samples
+        if next_start <= start:
+            next_start = end
+        start = next_start
+
+    return chunks
+
+
+def _normalized_word(word):
+    return re.sub(r"^\W+|\W+$", "", word, flags=re.UNICODE).casefold()
+
+
+def _deduplicate_chunk_prefix(previous_text, current_text, max_overlap_words=64):
+    """Remove a matching word prefix produced by the acoustic overlap."""
+    current_words = current_text.split()
+    if not previous_text or not current_words:
+        return current_text.strip()
+
+    previous_words = previous_text.split()
+    limit = min(len(previous_words), len(current_words), max_overlap_words)
+    previous_normalized = [_normalized_word(word) for word in previous_words]
+    current_normalized = [_normalized_word(word) for word in current_words]
+
+    for word_count in range(limit, 1, -1):
+        previous_suffix = previous_normalized[-word_count:]
+        current_prefix = current_normalized[:word_count]
+        if all(current_prefix) and previous_suffix == current_prefix:
+            return " ".join(current_words[word_count:]).strip()
+
+    return current_text.strip()
+
+
+def _assemble_transformers_chunks(decoded_chunks, chunk_ranges, total_samples):
+    """Merge overlapping text and assign gap-free ownership timestamps.
+
+    Every planned chunk becomes a segment, including chunks that decode to an
+    empty string. This keeps silence and decode failures visible instead of
+    silently dropping time from the result.
+    """
+    if len(decoded_chunks) != len(chunk_ranges):
+        raise ValueError("Decoded Canary chunks must match the chunk plan")
+
+    boundaries = [0]
+    for previous, current in zip(chunk_ranges, chunk_ranges[1:]):
+        boundaries.append((previous[1] + current[0]) // 2)
+    boundaries.append(total_samples)
+
+    merged_text = ""
+    segments = []
+    for index, ((chunk_start, chunk_end), decoded_text) in enumerate(
+        zip(chunk_ranges, decoded_chunks)
+    ):
+        decoded_text = decoded_text.strip()
+        contribution = _deduplicate_chunk_prefix(merged_text, decoded_text)
+        if contribution:
+            merged_text = f"{merged_text} {contribution}".strip()
+
+        owned_start = boundaries[index]
+        owned_end = boundaries[index + 1]
+        segments.append(
+            {
+                "segment": contribution,
+                "start": owned_start / SAMPLE_RATE,
+                "end": owned_end / SAMPLE_RATE,
+                "start_offset": owned_start,
+                "end_offset": owned_end,
+                "chunk_start": chunk_start / SAMPLE_RATE,
+                "chunk_end": chunk_end / SAMPLE_RATE,
+            }
+        )
+
+    return merged_text, segments
+
+
 def _transcribe_transformers(
     audio_path,
     source_lang,
@@ -213,15 +366,11 @@ def _transcribe_transformers(
     if task == "transcribe":
         target_lang = source_lang
 
-    chunk_samples = int(TRANSFORMERS_CHUNK_SECONDS * SAMPLE_RATE)
-    texts = []
-    segment_timestamps = []
+    chunk_ranges = _plan_transformers_chunks(audio)
+    decoded_chunks = []
 
-    for start_sample in range(0, len(audio), chunk_samples):
-        end_sample = min(len(audio), start_sample + chunk_samples)
+    for start_sample, end_sample in chunk_ranges:
         chunk = audio[start_sample:end_sample]
-        if chunk.size == 0:
-            continue
 
         inputs = processor.apply_transcription_request(
             audio=chunk,
@@ -232,29 +381,23 @@ def _transcribe_transformers(
         inputs = _move_inputs_to_model(inputs, torch, device, dtype)
 
         with torch.inference_mode():
-            generated_ids = model.generate(**inputs, max_new_tokens=512)
+            generated_ids = model.generate(**inputs, **TRANSFORMERS_GENERATION_KWARGS)
 
         decoded = processor.batch_decode(generated_ids, skip_special_tokens=True)
         text = decoded[0].strip() if decoded else ""
-        if not text:
-            continue
-
         start = start_sample / SAMPLE_RATE
         end = end_sample / SAMPLE_RATE
-        print(f"[{start:.2f}-{end:.2f}] {text}")
-        texts.append(text)
-        segment_timestamps.append(
-            {
-                "segment": text,
-                "start": start,
-                "end": end,
-                "start_offset": start_sample,
-                "end_offset": end_sample,
-            }
-        )
+        print(f"[{start:.2f}-{end:.2f}] {text or '[no speech]'}")
+        decoded_chunks.append(text)
+
+    text, segment_timestamps = _assemble_transformers_chunks(
+        decoded_chunks,
+        chunk_ranges,
+        len(audio),
+    )
 
     output_data = {
-        "transcription": " ".join(texts).strip(),
+        "transcription": text,
         "source_language": source_lang,
         "target_language": target_lang,
         "task": task,
