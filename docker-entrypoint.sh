@@ -14,33 +14,39 @@ echo "Requested UID: $PUID, GID: $PGID"
 setup_user() {
     local target_uid=$1
     local target_gid=$2
+    local current_uid
+    local current_gid
 
-    # Check if we need to modify the user
-    if [ "$target_uid" != "1000" ] || [ "$target_gid" != "1000" ]; then
-        echo "Setting up custom user with UID=$target_uid, GID=$target_gid..."
+    current_uid=$(id -u appuser)
+    current_gid=$(id -g appuser)
 
-        # Check if group already exists with different GID
+    echo "Current appuser UID: $current_uid, GID: $current_gid"
+
+    # Ensure appuser's primary group has the requested GID. If that GID already
+    # exists (common on Unraid, e.g. users=100), simply attach appuser to it.
+    if [ "$current_gid" != "$target_gid" ]; then
         if getent group "$target_gid" >/dev/null 2>&1; then
-            echo "Group with GID $target_gid already exists, using it"
+            echo "Using existing group with GID=$target_gid"
+            usermod -g "$target_gid" appuser
         else
-            # Modify existing group or create new one
-            groupmod -g "$target_gid" appuser 2>/dev/null || {
-                groupadd -g "$target_gid" appgroup
-                usermod -g "$target_gid" appuser
-            }
+            local current_group
+            current_group=$(id -gn appuser)
+            echo "Changing group $current_group from GID=$current_gid to GID=$target_gid"
+            groupmod -g "$target_gid" "$current_group"
+            usermod -g "$target_gid" appuser
         fi
-
-        # Modify user UID
-        usermod -u "$target_uid" appuser 2>/dev/null || {
-            echo "Warning: Could not change user ID, continuing with existing user"
-        }
-
-        # Update ownership of app directory
-        chown -R "$target_uid:$target_gid" /app 2>/dev/null || true
-
-    else
-        echo "Using default user (UID=1000, GID=1000)"
     fi
+
+    # Dockerfile creates appuser with UID 10001. Always reconcile the actual
+    # account UID with PUID, including the nominal default PUID=1000.
+    if [ "$current_uid" != "$target_uid" ]; then
+        echo "Changing appuser UID from $current_uid to $target_uid"
+        usermod -u "$target_uid" appuser
+    fi
+
+    # Update ownership of app directory. Bind-mounted paths are explicitly
+    # chowned again below after their directories are created.
+    chown -R "$target_uid:$target_gid" /app 2>/dev/null || true
 }
 
 # Setup the user (only if running as root)
@@ -53,7 +59,7 @@ if [ "$(id -u)" = "0" ]; then
     chown -R "$PUID:$PGID" /app/data /app/whisperx-env
 
     echo "=== Setup Complete ==="
-    echo "Switching to user appuser (UID=$PUID, GID=$PGID) and starting application..."
+    echo "Switching to user appuser (UID=$(id -u appuser), GID=$(id -g appuser)) and starting application..."
 
     # Switch to the appuser and execute the command
     exec gosu appuser "$@"
