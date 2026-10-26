@@ -4,17 +4,54 @@
 The default backend remains NeMo for full word/segment timestamps. Set
 SCRIBERR_CANARY_BACKEND=transformers to use Hugging Face Transformers and
 avoid loading Canary's auxiliary CTC timestamp model. The Transformers path
-uses FP16 on CUDA and emits coarse chunk-level segment timestamps only.
+runs in an isolated sibling uv environment and uses FP16 on CUDA. It emits
+coarse chunk-level segment timestamps, not NeMo NFA word timestamps.
 """
 
 import argparse
 import json
 import os
+import subprocess
 import sys
 
 MODEL_ID = "nvidia/canary-1b-v2"
 SAMPLE_RATE = 16000
 TRANSFORMERS_CHUNK_SECONDS = 30.0
+_TRANSFORMERS_CHILD_ENV = "SCRIBERR_CANARY_TRANSFORMERS_CHILD"
+
+_TRANSFORMERS_PYPROJECT = r'''[project]
+name = "canary-transformers"
+version = "0.1.0"
+description = "Low-memory NVIDIA Canary inference using Hugging Face Transformers"
+requires-python = ">=3.11"
+dependencies = [
+    "torch",
+    "torchaudio",
+    "librosa",
+    "soundfile",
+    "transformers @ git+https://github.com/huggingface/transformers.git",
+]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { index = "pytorch-cpu", marker = "sys_platform == 'darwin'" },
+]
+torchaudio = [
+    { index = "pytorch", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { index = "pytorch-cpu", marker = "sys_platform == 'darwin'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+'''
 
 
 def _write_output(output_data, output_file):
@@ -24,6 +61,53 @@ def _write_output(output_data, output_file):
         print(f"Results saved to: {output_file}")
     else:
         print(json.dumps(output_data, indent=2, ensure_ascii=False))
+
+
+def _project_root_from_virtual_env():
+    virtual_env = os.environ.get("VIRTUAL_ENV")
+    if not virtual_env:
+        raise RuntimeError("VIRTUAL_ENV is not set; run this script with uv run")
+    return os.path.dirname(virtual_env)
+
+
+def _reexec_in_transformers_env():
+    """Run the Transformers backend in an isolated uv project.
+
+    The environment and HF model cache both live under /app/whisperx-env (or
+    the configured NVIDIA env root), so multiple Scriberr containers can share
+    them without modifying the NeMo/Parakeet environment.
+    """
+    project_root = _project_root_from_virtual_env()
+    transformers_project = os.path.join(project_root, "canary-transformers")
+    os.makedirs(transformers_project, exist_ok=True)
+
+    pyproject_path = os.path.join(transformers_project, "pyproject.toml")
+    current = None
+    if os.path.exists(pyproject_path):
+        with open(pyproject_path, "r", encoding="utf-8") as f:
+            current = f.read()
+    if current != _TRANSFORMERS_PYPROJECT:
+        with open(pyproject_path, "w", encoding="utf-8") as f:
+            f.write(_TRANSFORMERS_PYPROJECT)
+
+    env = os.environ.copy()
+    env[_TRANSFORMERS_CHILD_ENV] = "1"
+    env.setdefault("HF_HOME", os.path.join(project_root, "hf-cache"))
+    env.setdefault("HUGGINGFACE_HUB_CACHE", os.path.join(project_root, "hf-cache", "hub"))
+
+    cmd = [
+        "uv",
+        "run",
+        "--native-tls",
+        "--project",
+        transformers_project,
+        "python",
+        os.path.abspath(__file__),
+        *sys.argv[1:],
+    ]
+    print(f"Launching isolated Transformers backend: {transformers_project}")
+    completed = subprocess.run(cmd, env=env)
+    raise SystemExit(completed.returncode)
 
 
 def _transcribe_nemo(
@@ -38,11 +122,7 @@ def _transcribe_nemo(
     # Import NeMo lazily so the low-memory backend never initializes NeMo.
     import nemo.collections.asr as nemo_asr
 
-    virtual_env = os.environ.get("VIRTUAL_ENV")
-    if not virtual_env:
-        raise RuntimeError("VIRTUAL_ENV is not set; run this script with uv run")
-
-    project_root = os.path.dirname(virtual_env)
+    project_root = _project_root_from_virtual_env()
     model_filename = "canary-1b-v2.nemo"
     model_path = os.path.join(project_root, model_filename)
     if not os.path.exists(model_path):
@@ -97,7 +177,7 @@ def _transcribe_transformers(
     output_file,
     preserve_formatting,
 ):
-    # Imports are deliberately local. This path should not import NeMo at all.
+    # Imports are deliberately local. This child environment contains no NeMo.
     import librosa
     import torch
     from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
@@ -187,6 +267,8 @@ def transcribe_audio(
     print(f"Target language: {target_lang}")
 
     if backend == "transformers":
+        if os.environ.get(_TRANSFORMERS_CHILD_ENV) != "1":
+            _reexec_in_transformers_env()
         _transcribe_transformers(
             audio_path=audio_path,
             source_lang=source_lang,
@@ -284,6 +366,8 @@ def main():
             include_confidence=args.include_confidence,
             preserve_formatting=args.preserve_formatting,
         )
+    except SystemExit:
+        raise
     except Exception as exc:
         print(f"Error during transcription: {exc}", file=sys.stderr)
         sys.exit(1)
