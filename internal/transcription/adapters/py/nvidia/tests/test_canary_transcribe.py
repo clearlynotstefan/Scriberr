@@ -18,6 +18,7 @@ SCRIPT_PATH = SCRIPT_DIR / "canary_transcribe.py"
 TEST_DATA_DIR = Path(__file__).parent.parent.parent.parent.parent.parent.parent / "tests/data"
 AUDIO_FILE = TEST_DATA_DIR / "AMI-Corpus-IB4002.Mix-Headset-clip.wav"
 
+
 def load_canary_module():
     spec = importlib.util.spec_from_file_location("canary_transcribe_test_module", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
@@ -190,13 +191,16 @@ def test_nemo_backend_remains_default(monkeypatch):
     assert called["audio_path"] == "audio.wav"
     assert called["timestamps"] is True
 
+
 def test_canary_transcription_output():
     """Verify the existing NeMo Canary transcription output remains intact."""
-    assert AUDIO_FILE.exists(), f"Audio file not found: {AUDIO_FILE}"
+    if not AUDIO_FILE.exists():
+        pytest.skip(f"NeMo integration audio fixture not found: {AUDIO_FILE}")
 
     project_root = Path(__file__).resolve().parents[6]
     env_path = project_root / "data/whisperx-env/parakeet"
-    assert env_path.exists(), f"Environment not found at: {env_path}"
+    if not env_path.exists():
+        pytest.skip(f"NeMo integration environment not found: {env_path}")
 
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp_file:
         output_file = tmp_file.name
