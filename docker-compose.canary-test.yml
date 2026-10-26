@@ -1,3 +1,5 @@
+name: scriberr-canary-test
+
 services:
   scriberr-canary-test:
     build:
