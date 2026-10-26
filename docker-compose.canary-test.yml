@@ -25,8 +25,8 @@ services:
       - APP_ENV=production
       - SCRIBERR_CANARY_BACKEND=transformers
       - SCRIBERR_CANARY_TEST_ONLY=1
-      - HF_HOME=/root/.cache/huggingface
-      - HUGGINGFACE_HUB_CACHE=/root/.cache/huggingface/hub
+      - HF_HOME=/app/cache/huggingface
+      - HUGGINGFACE_HUB_CACHE=/app/cache/huggingface/hub
     volumes:
       # Completely separate experimental application state.
       - /mnt/user/appdata/scriberr-canary-test/data:/app/data
@@ -36,9 +36,9 @@ services:
       # adapter does not install NeMo or download canary-1b-v2.nemo.
       - /mnt/user/appdata/scriberr-canary-test/models:/app/whisperx-env
 
-      # Share only the download/cache tree. Transformers Canary safetensors are
-      # downloaded once here and can be reused across rebuilds/containers.
-      - /mnt/user/appdata/scriberr/cache:/root/.cache
+      # Share only the persistent download/cache tree. Transformers Canary
+      # safetensors are downloaded once here and reused across rebuilds.
+      - /mnt/user/appdata/scriberr/cache:/app/cache
 
       # Deliberately no watch-folder mount during testing.
     restart: unless-stopped
