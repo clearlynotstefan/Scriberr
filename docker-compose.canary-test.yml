@@ -7,38 +7,51 @@ services:
       dockerfile: Dockerfile.cuda
     image: scriberr:canary-transformers-test
     container_name: scriberr-canary-test
+    environment:
+      # Match the working Unraid Scriberr runtime where applicable.
+      - PUID=99
+      - PGID=100
+      - TZ=America/New_York
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - SECURE_COOKIES=false
+
+      # Canary experiment controls. Do not register/initialize the other local
+      # model adapters in this test container.
+      - SCRIBERR_CANARY_BACKEND=transformers
+      - SCRIBERR_CANARY_TEST_ONLY=1
+
+      # Canary-1B-v2 is public, so an HF token is not required for this test.
+      # If HF_TOKEN is exported in the shell, pass it through without storing a
+      # credential in the repository.
+      - HF_TOKEN=${HF_TOKEN:-}
+
+      # Put Hugging Face files in the persistent shared cache. The host path is
+      # the same cache directory used by production, while the container path is
+      # writable by the unprivileged app user.
+      - HF_HOME=/app/cache/huggingface
+      - HUGGINGFACE_HUB_CACHE=/app/cache/huggingface/hub
+    volumes:
+      # Experimental application state is completely separate from production.
+      - /mnt/user/appdata/scriberr-canary-test/data:/app/data
+      - /mnt/user/appdata/scriberr-canary-test/home:/home
+
+      # Separate Python/model environment. Production's
+      # /mnt/user/appdata/scriberr/models is deliberately NOT mounted.
+      - /mnt/user/appdata/scriberr-canary-test/models:/app/whisperx-env
+
+      # Share only the persistent cache so the Transformers Canary weights are
+      # downloaded once and survive rebuilds.
+      - /mnt/user/appdata/scriberr/cache:/app/cache
+
+      # Deliberately no /app/watch_folder mount during testing.
     ports:
       - "8182:8080"
+    restart: unless-stopped
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               count: all
-              capabilities:
-                - gpu
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - PUID=${PUID:-99}
-      - PGID=${PGID:-100}
-      - APP_ENV=production
-      - SCRIBERR_CANARY_BACKEND=transformers
-      - SCRIBERR_CANARY_TEST_ONLY=1
-      - HF_HOME=/app/cache/huggingface
-      - HUGGINGFACE_HUB_CACHE=/app/cache/huggingface/hub
-    volumes:
-      # Completely separate experimental application state.
-      - /mnt/user/appdata/scriberr-canary-test/data:/app/data
-      - /mnt/user/appdata/scriberr-canary-test/home:/home
-
-      # Completely separate Python/model environment. The test-only Canary
-      # adapter does not install NeMo or download canary-1b-v2.nemo.
-      - /mnt/user/appdata/scriberr-canary-test/models:/app/whisperx-env
-
-      # Share only the persistent download/cache tree. Transformers Canary
-      # safetensors are downloaded once here and reused across rebuilds.
-      - /mnt/user/appdata/scriberr/cache:/app/cache
-
-      # Deliberately no watch-folder mount during testing.
-    restart: unless-stopped
+              capabilities: [gpu]
