@@ -11,6 +11,11 @@ dependencies = [
     # NeMo 2.5.3 was developed against the 4.53 Transformers line. Pin the
     # patch release so a persistent runtime environment stays reproducible.
     "transformers==4.53.3",
+    # NeMo 2.5.3 leaves datasets unpinned. Current PyArrow wheels require
+    # NumPy 2, while Megatron Core 0.14 correctly requires NumPy <2. Keep the
+    # last mutually compatible Datasets/Arrow pair for this NeMo generation.
+    "datasets==3.6.0",
+    "pyarrow==20.0.0",
     "torch",
     "torchaudio",
     "librosa",
