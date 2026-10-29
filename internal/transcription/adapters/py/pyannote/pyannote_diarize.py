@@ -41,6 +41,8 @@ def diarize_audio(
     """
     print(f"Loading PyAnnote speaker diarization pipeline: {model}")
 
+    runtime_device = "cpu"
+
     try:
         # Initialize the diarization pipeline
         pipeline = Pipeline.from_pretrained(
@@ -53,6 +55,7 @@ def diarize_audio(
         try:
             if torch.cuda.is_available():
                 pipeline = pipeline.to(torch.device("cuda"))
+                runtime_device = "cuda"
                 print("Using CUDA for diarization")
             elif device == "cuda":
                 print("CUDA requested but not available, falling back to CPU")
@@ -69,20 +72,24 @@ def diarize_audio(
                 # Get current parameters
                 params = pipeline.parameters(instantiated=True)
 
-                # Update segmentation thresholds
-                if "segmentation" in params:
-                    if segmentation_onset is not None:
-                        params["segmentation"]["threshold"] = segmentation_onset
-                        print(f"Set segmentation onset threshold: {segmentation_onset}")
-                    if segmentation_offset is not None:
-                        # PyAnnote uses min_duration_off for offset behavior
-                        params["segmentation"]["min_duration_off"] = segmentation_offset
-                        print(f"Set segmentation offset (min_duration_off): {segmentation_offset}")
+                changed = False
+                if segmentation_onset is not None:
+                    changed |= set_existing_parameter(
+                        params,
+                        [("segmentation", "threshold"), ("segmentation", "onset")],
+                        segmentation_onset,
+                        "segmentation onset",
+                    )
+                if segmentation_offset is not None:
+                    changed |= set_existing_parameter(
+                        params,
+                        [("segmentation", "min_duration_off"), ("segmentation", "offset")],
+                        segmentation_offset,
+                        "segmentation offset",
+                    )
 
-                    # Instantiate pipeline with new parameters
+                if changed:
                     pipeline.instantiate(params)
-                else:
-                    print("Warning: Could not find segmentation parameters in pipeline")
             except Exception as e:
                 print(f"Warning: Could not set segmentation thresholds: {e}")
                 print("Continuing with default thresholds")
@@ -110,36 +117,31 @@ def diarize_audio(
             print("Using automatic speaker detection")
             diarization = pipeline(audio_path)
 
-        print(f"Diarization completed. Saving results to: {output_file}")
+        annotation, diarization_type = select_diarization_annotation(diarization)
+        print(f"Diarization completed ({diarization_type} output). Saving results to: {output_file}")
 
         if output_format == "rttm":
             # Save the diarization output to RTTM format
             with open(output_file, "w") as rttm:
-                diarization.write_rttm(rttm)
+                annotation.write_rttm(rttm)
         else:
             # Save as JSON format
-            save_json_format(diarization, output_file, audio_path)
+            save_json_format(
+                annotation,
+                output_file,
+                audio_path,
+                model,
+                diarization_type,
+                runtime_device,
+            )
 
         # Print summary
         speakers = set()
         total_speech_time = 0.0
 
-        # Iterate over speaker diarization
-        # PyAnnote 4.x returns a DiarizeOutput object with a speaker_diarization attribute
-        if hasattr(diarization, "speaker_diarization"):
-            for turn, speaker in diarization.speaker_diarization:
-                speakers.add(speaker)
-                total_speech_time += turn.duration
-        elif hasattr(diarization, "itertracks"):
-            # Fallback for older versions
-            for segment, track, speaker in diarization.itertracks(yield_label=True):
-                speakers.add(speaker)
-                total_speech_time += segment.duration
-        else:
-            # Try iterating directly (some versions return Annotation directly)
-            for segment, track, speaker in diarization.itertracks(yield_label=True):
-                speakers.add(speaker)
-                total_speech_time += segment.duration
+        for turn, speaker in iter_annotation(annotation):
+            speakers.add(speaker)
+            total_speech_time += turn.duration
 
         print(f"\nDiarization Summary:")
         print(f"  Speakers detected: {len(speakers)}")
@@ -152,40 +154,68 @@ def diarize_audio(
         sys.exit(1)
 
 
-def save_json_format(diarization, output_file: str, audio_path: str):
+def set_existing_parameter(params, candidates, value, label):
+    """Set a tuning value only when that pipeline actually exposes the key."""
+    for parent, key in candidates:
+        section = params.get(parent)
+        if isinstance(section, dict) and key in section:
+            section[key] = value
+            print(f"Set {label} ({parent}.{key}): {value}")
+            return True
+    print(f"Warning: {label} is not supported by this pipeline; using its default")
+    return False
+
+
+def select_diarization_annotation(output):
+    """Prefer Community-1's exclusive output for transcript reconciliation."""
+    exclusive = getattr(output, "exclusive_speaker_diarization", None)
+    if exclusive is not None:
+        return exclusive, "exclusive"
+    regular = getattr(output, "speaker_diarization", None)
+    if regular is not None:
+        return regular, "regular"
+    return output, "regular"
+
+
+def iter_annotation(annotation):
+    if hasattr(annotation, "itertracks"):
+        for segment, _, speaker in annotation.itertracks(yield_label=True):
+            yield segment, speaker
+        return
+    for segment, speaker in annotation:
+        yield segment, speaker
+
+
+def save_json_format(
+    annotation,
+    output_file: str,
+    audio_path: str,
+    model: str,
+    diarization_type: str,
+    runtime_device: str,
+):
     """Save diarization results in JSON format."""
     segments = []
     speakers = set()
 
-    # PyAnnote 4.x
-    if hasattr(diarization, "speaker_diarization"):
-        for turn, speaker in diarization.speaker_diarization:
-            segments.append({
-                "start": turn.start,
-                "end": turn.end,
-                "speaker": speaker,
-                "confidence": 1.0,
-                "duration": turn.duration
-            })
-            speakers.add(speaker)
-    # Older versions
-    elif hasattr(diarization, "itertracks"):
-        for segment, track, speaker in diarization.itertracks(yield_label=True):
-            segments.append({
-                "start": segment.start,
-                "end": segment.end,
-                "speaker": speaker,
-                "confidence": 1.0,
-                "duration": segment.duration
-            })
-            speakers.add(speaker)
+    for turn, speaker in iter_annotation(annotation):
+        segments.append({
+            "start": turn.start,
+            "end": turn.end,
+            "speaker": speaker,
+            "confidence": 1.0,
+            "duration": turn.duration
+        })
+        speakers.add(speaker)
 
     # Sort segments by start time
     segments.sort(key=lambda x: x["start"])
 
     results = {
         "audio_file": audio_path,
-        "model": "pyannote/speaker-diarization-community-1",
+        "model": model,
+        "diarization_type": diarization_type,
+        "runtime": {"device": runtime_device},
         "segments": segments,
         "speakers": sorted(speakers),
         "speaker_count": len(speakers),

@@ -762,9 +762,9 @@ func (h *Handler) SubmitJob(c *gin.Context) {
 	}
 
 	// Parse and validate diarization model
-	diarizeModel := getFormValueWithDefault(c, "diarize_model", "pyannote")
-	if diarizeModel != "pyannote" && diarizeModel != "nvidia_sortformer" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid diarize_model. Must be 'pyannote' or 'nvidia_sortformer'"})
+	diarizeModel := getFormValueWithDefault(c, "diarize_model", transcription.ModelDiarizationCommunity)
+	if !transcription.IsSupportedDiarizationModel(diarizeModel) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid diarize_model"})
 		_ = h.fileService.RemoveFile(filePath)
 		return
 	}
@@ -1076,7 +1076,7 @@ func (h *Handler) getValidatedTranscriptionParams(c *gin.Context, job *models.Tr
 		VadOffset:                      0.363,
 		ChunkSize:                      30,
 		Diarize:                        false,
-		DiarizeModel:                   "pyannote/speaker-diarization-3.1",
+		DiarizeModel:                   transcription.ModelDiarizationCommunity,
 		SpeakerEmbeddings:              false,
 		Temperature:                    0,
 		BestOf:                         5,
@@ -1113,16 +1113,12 @@ func (h *Handler) getValidatedTranscriptionParams(c *gin.Context, job *models.Tr
 		"diarize_model", requestParams.DiarizeModel,
 		"language", requestParams.Language)
 
-	// Validate NVIDIA-specific constraints
-	if requestParams.ModelFamily == "nvidia_parakeet" || requestParams.ModelFamily == "nvidia_canary" {
-		// Both NVIDIA models support multiple European languages
-		// No language restriction needed - models support auto-detection
-
-		// NVIDIA models support diarization via Pyannote integration or NVIDIA Sortformer
-		if requestParams.Diarize && requestParams.DiarizeModel == "pyannote" && (requestParams.HfToken == nil || *requestParams.HfToken == "") {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Hugging Face token (hf_token) is required for Pyannote diarization"})
-			return nil, fmt.Errorf("hf_token required")
-		}
+	// Every transcription family can use the separate Pyannote stage. Validate
+	// its one external requirement here instead of failing after transcription.
+	if requestParams.Diarize && strings.HasPrefix(requestParams.DiarizeModel, "pyannote") &&
+		(requestParams.HfToken == nil || *requestParams.HfToken == "") && os.Getenv("HF_TOKEN") == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Hugging Face token (hf_token) is required for Pyannote diarization"})
+		return nil, fmt.Errorf("hf_token required")
 	}
 
 	// Validate multi-track compatibility
@@ -1378,6 +1374,13 @@ func (h *Handler) GetJobExecutionData(c *gin.Context) {
 		"created_at":           execution.CreatedAt,
 		"updated_at":           execution.UpdatedAt,
 		"is_multi_track":       job.IsMultiTrack,
+	}
+
+	if execution.RuntimeMetadata != nil && *execution.RuntimeMetadata != "" {
+		var runtimeMetadata map[string]interface{}
+		if err := json.Unmarshal([]byte(*execution.RuntimeMetadata), &runtimeMetadata); err == nil {
+			response["runtime_metadata"] = runtimeMetadata
+		}
 	}
 
 	// Add multi-track specific data if available
@@ -2496,7 +2499,7 @@ func (h *Handler) SubmitQuickTranscription(c *gin.Context) {
 
 			// Diarization settings
 			Diarize:           false,
-			DiarizeModel:      "pyannote/speaker-diarization-3.1",
+			DiarizeModel:      transcription.ModelDiarizationCommunity,
 			SpeakerEmbeddings: false,
 
 			// Transcription quality settings

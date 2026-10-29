@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -366,14 +367,14 @@ func (c *CanaryAdapter) Transcribe(ctx context.Context, input interfaces.AudioIn
 		"PYTHONUNBUFFERED=1",
 		"PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True")
 
-	// Start each Canary attempt with a clean log. Downstream stages such as
-	// Sortformer open the same file in append mode, so their output still follows
-	// this transcription without stale output from an earlier retry.
-	logFile, err := os.OpenFile(filepath.Join(procCtx.OutputDirectory, "transcription.log"), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	// Keep every attempt. A failed retry is evidence, not litter, and the UI log
+	// is explicitly a sequential processing history.
+	logFile, err := os.OpenFile(filepath.Join(procCtx.OutputDirectory, "transcription.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		logger.Warn("Failed to create log file", "error", err)
 	} else {
 		defer logFile.Close()
+		_, _ = fmt.Fprintf(logFile, "\n=== Canary attempt %s backend=%s ===\n", time.Now().Format(time.RFC3339), backend)
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile
 	}
@@ -402,10 +403,14 @@ func (c *CanaryAdapter) Transcribe(ctx context.Context, input interfaces.AudioIn
 		return nil, fmt.Errorf("failed to parse result: %w", err)
 	}
 
+	parsedMetadata := result.Metadata
 	result.ProcessingTime = time.Since(startTime)
 	result.ModelUsed = "canary-1b-v2"
 	result.Metadata = c.CreateDefaultMetadata(params)
 	result.Metadata["backend"] = backend
+	for key, value := range parsedMetadata {
+		result.Metadata[key] = value
+	}
 
 	logger.Info("Canary transcription completed",
 		"segments", len(result.Segments),
@@ -490,10 +495,20 @@ func (c *CanaryAdapter) parseResult(tempDir string, input interfaces.AudioInput,
 	}
 
 	var canaryResult struct {
-		Transcription  string `json:"transcription"`
-		SourceLanguage string `json:"source_language"`
-		TargetLanguage string `json:"target_language"`
-		Task           string `json:"task"`
+		Transcription      string `json:"transcription"`
+		SourceLanguage     string `json:"source_language"`
+		TargetLanguage     string `json:"target_language"`
+		Task               string `json:"task"`
+		Backend            string `json:"backend"`
+		TimestampPrecision string `json:"timestamp_precision"`
+		Runtime            struct {
+			Device              string  `json:"device"`
+			ComputeType         string  `json:"compute_type"`
+			BatchSize           int     `json:"batch_size"`
+			ChunkSizeSeconds    float64 `json:"chunk_size_seconds"`
+			ChunkOverlapSeconds float64 `json:"chunk_overlap_seconds"`
+			DecoderGuardrails   string  `json:"decoder_guardrails"`
+		} `json:"runtime"`
 		WordTimestamps []struct {
 			Word        string  `json:"word"`
 			StartOffset int     `json:"start_offset"`
@@ -528,6 +543,22 @@ func (c *CanaryAdapter) parseResult(tempDir string, input interfaces.AudioInput,
 		Segments:     make([]interfaces.TranscriptSegment, len(canaryResult.SegmentTimestamps)),
 		WordSegments: make([]interfaces.TranscriptWord, len(canaryResult.WordTimestamps)),
 		Confidence:   0.0, // Default confidence
+		Metadata: map[string]string{
+			"backend":             canaryResult.Backend,
+			"timestamp_precision": canaryResult.TimestampPrecision,
+			"device":              canaryResult.Runtime.Device,
+			"compute_type":        canaryResult.Runtime.ComputeType,
+			"batch_size":          strconv.Itoa(canaryResult.Runtime.BatchSize),
+		},
+	}
+	if canaryResult.Runtime.ChunkSizeSeconds > 0 {
+		result.Metadata["chunk_size_seconds"] = strconv.FormatFloat(canaryResult.Runtime.ChunkSizeSeconds, 'f', -1, 64)
+	}
+	if canaryResult.Runtime.ChunkOverlapSeconds > 0 {
+		result.Metadata["chunk_overlap_seconds"] = strconv.FormatFloat(canaryResult.Runtime.ChunkOverlapSeconds, 'f', -1, 64)
+	}
+	if canaryResult.Runtime.DecoderGuardrails != "" {
+		result.Metadata["decoder_guardrails"] = canaryResult.Runtime.DecoderGuardrails
 	}
 
 	// Convert segments
@@ -546,7 +577,7 @@ func (c *CanaryAdapter) parseResult(tempDir string, input interfaces.AudioInput,
 			Start: word.Start,
 			End:   word.End,
 			Word:  word.Word,
-			Score: 1.0, // Canary doesn't provide word-level scores
+			Score: 0.0, // Canary does not report word-level confidence
 		}
 	}
 

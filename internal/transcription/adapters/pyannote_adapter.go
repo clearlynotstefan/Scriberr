@@ -66,11 +66,14 @@ func NewPyAnnoteAdapter(envPath string) *PyAnnoteAdapter {
 			Group:       "basic",
 		},
 		{
-			Name:        "model",
-			Type:        "string",
-			Required:    false,
-			Default:     "pyannote/speaker-diarization-community-1",
-			Options:     []string{"pyannote/speaker-diarization-community-1"},
+			Name:     "model",
+			Type:     "string",
+			Required: false,
+			Default:  "pyannote/speaker-diarization-community-1",
+			Options: []string{
+				"pyannote/speaker-diarization-community-1",
+				"pyannote/speaker-diarization-3.1",
+			},
 			Description: "PyAnnote model to use",
 			Group:       "basic",
 		},
@@ -132,7 +135,7 @@ func NewPyAnnoteAdapter(envPath string) *PyAnnoteAdapter {
 			Name:        "segmentation_onset",
 			Type:        "float",
 			Required:    false,
-			Default:     0.5,
+			Default:     nil,
 			Min:         &[]float64{0.0}[0],
 			Max:         &[]float64{1.0}[0],
 			Description: "Voice activity detection onset threshold",
@@ -142,7 +145,7 @@ func NewPyAnnoteAdapter(envPath string) *PyAnnoteAdapter {
 			Name:        "segmentation_offset",
 			Type:        "float",
 			Required:    false,
-			Default:     0.363,
+			Default:     nil,
 			Min:         &[]float64{0.0}[0],
 			Max:         &[]float64{1.0}[0],
 			Description: "Voice activity detection offset threshold",
@@ -352,9 +355,13 @@ func (p *PyAnnoteAdapter) Diarize(ctx context.Context, input interfaces.AudioInp
 		return nil, fmt.Errorf("failed to parse result: %w", err)
 	}
 
+	parsedMetadata := result.Metadata
 	result.ProcessingTime = time.Since(startTime)
 	result.ModelUsed = p.GetStringParameter(params, "model")
 	result.Metadata = p.CreateDefaultMetadata(params)
+	for key, value := range parsedMetadata {
+		result.Metadata[key] = value
+	}
 
 	logger.Info("PyAnnote diarization completed",
 		"segments", len(result.Segments),
@@ -431,9 +438,13 @@ func (p *PyAnnoteAdapter) parseJSONResult(tempDir string) (*interfaces.Diarizati
 	}
 
 	var pyannoteResult struct {
-		AudioFile string `json:"audio_file"`
-		Model     string `json:"model"`
-		Segments  []struct {
+		AudioFile       string `json:"audio_file"`
+		Model           string `json:"model"`
+		DiarizationType string `json:"diarization_type"`
+		Runtime         struct {
+			Device string `json:"device"`
+		} `json:"runtime"`
+		Segments []struct {
 			Start      float64 `json:"start"`
 			End        float64 `json:"end"`
 			Speaker    string  `json:"speaker"`
@@ -454,6 +465,11 @@ func (p *PyAnnoteAdapter) parseJSONResult(tempDir string) (*interfaces.Diarizati
 		Segments:     make([]interfaces.DiarizationSegment, len(pyannoteResult.Segments)),
 		SpeakerCount: pyannoteResult.SpeakerCount,
 		Speakers:     pyannoteResult.Speakers,
+		ModelUsed:    pyannoteResult.Model,
+		Metadata: map[string]string{
+			"diarization_type": pyannoteResult.DiarizationType,
+			"device":           pyannoteResult.Runtime.Device,
+		},
 	}
 
 	for i, seg := range pyannoteResult.Segments {
@@ -524,6 +540,7 @@ func (p *PyAnnoteAdapter) parseRTTMResult(tempDir string, input interfaces.Audio
 		Segments:     segments,
 		SpeakerCount: len(speakers),
 		Speakers:     speakerList,
+		Metadata:     map[string]string{"diarization_type": "regular"},
 	}
 
 	return result, nil

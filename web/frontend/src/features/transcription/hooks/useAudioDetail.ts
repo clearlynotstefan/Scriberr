@@ -25,6 +25,7 @@ export interface ExecutionData {
     processing_duration?: number | null; // milliseconds
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     actual_parameters?: any;
+    runtime_metadata?: Record<string, string | number | boolean>;
     status?: string;
     error_message?: string | null;
     created_at?: string;

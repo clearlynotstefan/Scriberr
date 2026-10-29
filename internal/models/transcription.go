@@ -87,7 +87,7 @@ type WhisperXParams struct {
 	Diarize           bool   `json:"diarize" gorm:"type:boolean;default:false"`
 	MinSpeakers       *int   `json:"min_speakers,omitempty" gorm:"type:int"`
 	MaxSpeakers       *int   `json:"max_speakers,omitempty" gorm:"type:int"`
-	DiarizeModel      string `json:"diarize_model" gorm:"type:varchar(50);default:'pyannote'"` // Options: 'pyannote', 'nvidia_sortformer'
+	DiarizeModel      string `json:"diarize_model" gorm:"type:varchar(80);default:'pyannote/speaker-diarization-community-1'"` // Pyannote model ID or 'nvidia_sortformer'
 	SpeakerEmbeddings bool   `json:"speaker_embeddings" gorm:"type:boolean;default:false"`
 
 	// Transcription quality settings
@@ -211,10 +211,10 @@ func (tp *TranscriptionProfile) BeforeSave(tx *gorm.DB) error {
 // LLMConfig represents LLM configuration settings
 type LLMConfig struct {
 	ID            uint      `json:"id" gorm:"primaryKey"`
-	Provider      string    `json:"provider" gorm:"not null;type:varchar(50)"` // "ollama" or "openai"
-	BaseURL       *string   `json:"base_url,omitempty" gorm:"type:text"`       // For Ollama
+	Provider      string    `json:"provider" gorm:"not null;type:varchar(50)"`  // "ollama" or "openai"
+	BaseURL       *string   `json:"base_url,omitempty" gorm:"type:text"`        // For Ollama
 	OpenAIBaseURL *string   `json:"openai_base_url,omitempty" gorm:"type:text"` // For OpenAI custom endpoint
-	APIKey        *string   `json:"api_key,omitempty" gorm:"type:text"`        // For OpenAI (encrypted)
+	APIKey        *string   `json:"api_key,omitempty" gorm:"type:text"`         // For OpenAI (encrypted)
 	IsActive      bool      `json:"is_active" gorm:"type:boolean;default:false"`
 	CreatedAt     time.Time `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt     time.Time `json:"updated_at" gorm:"autoUpdateTime"`
@@ -314,6 +314,9 @@ type TranscriptionJobExecution struct {
 
 	// Parameters used for this execution (may differ from job parameters due to profiles)
 	ActualParameters WhisperXParams `json:"actual_parameters" gorm:"embedded;embeddedPrefix:actual_"`
+	// RuntimeMetadata records facts reported by the adapters instead of
+	// repeating profile defaults that a backend may not use.
+	RuntimeMetadata *string `json:"runtime_metadata,omitempty" gorm:"type:text"`
 
 	// Execution results
 	Status       JobStatus `json:"status" gorm:"type:varchar(20);not null"`

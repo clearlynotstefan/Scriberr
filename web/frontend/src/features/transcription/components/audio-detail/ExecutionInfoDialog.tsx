@@ -99,6 +99,18 @@ export function ExecutionInfoDialog({ audioId, isOpen, onClose }: ExecutionInfoD
                                 <CuratedParamsDisplay params={executionData.actual_parameters} />
                             </div>
                         )}
+
+                        {executionData.runtime_metadata && Object.keys(executionData.runtime_metadata).length > 0 && (
+                            <div className="bg-[var(--bg-main)] rounded-[var(--radius-card)] border border-[var(--border-subtle)] p-4 sm:p-6 shadow-sm">
+                                <h3 className="text-base font-bold text-[var(--text-primary)] mb-1">
+                                    Runtime Details
+                                </h3>
+                                <p className="text-xs text-[var(--text-tertiary)] mb-4">
+                                    Values reported by the model after this run. These override generic profile defaults.
+                                </p>
+                                <RuntimeMetadataDisplay metadata={executionData.runtime_metadata} />
+                            </div>
+                        )}
                     </div>
                 ) : (
                     <div className="py-12 text-center text-[var(--text-tertiary)]">
@@ -126,16 +138,13 @@ function MetricCard({ label, value, subtext, highlight = false, className = "" }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function CuratedParamsDisplay({ params }: { params: any }) {
     // Determine keys to show based on model_family
-    // Common keys for all
     const commonKeys = [
         'model_family',
         'task',
         'language',
         'output_format',
-        'device',
-        'compute_type',
-        'batch_size',
-        'diarize'
+        'diarize',
+        ...(params.diarize ? ['diarize_model', 'min_speakers', 'max_speakers'] : [])
     ];
 
     let specificKeys: string[] = [];
@@ -143,20 +152,21 @@ function CuratedParamsDisplay({ params }: { params: any }) {
     if (params.model_family === 'whisper') {
         specificKeys = [
             'model',
+            'device',
+            'compute_type',
+            'batch_size',
             'no_align',
             'vad_method',
-            ...(params.diarize ? ['diarize_model', 'min_speakers', 'max_speakers', 'hf_token'] : [])
+            ...(params.diarize && String(params.diarize_model).startsWith('pyannote') ? ['hf_token'] : [])
         ];
     } else if (params.model_family === 'nvidia_parakeet') {
-        specificKeys = [
-            'attention_context_left',
-            'attention_context_right',
-            ...(params.diarize ? ['diarize_model'] : [])
-        ];
+        specificKeys = ['model', 'attention_context_left', 'attention_context_right'];
     } else if (params.model_family === 'openai') {
         specificKeys = ['model', 'api_key']; // api_key should ideally be masked or hidden
     } else if (params.model_family === 'nvidia_canary') {
         specificKeys = ['model', 'canary_backend'];
+    } else if (params.model_family === 'mistral_voxtral') {
+        specificKeys = ['model', 'max_new_tokens'];
     }
 
     const keysToShow = [...commonKeys, ...specificKeys];
@@ -180,6 +190,32 @@ function CuratedParamsDisplay({ params }: { params: any }) {
                 <div key={entry.key} className="flex justify-between items-center py-1 border-b border-[var(--border-subtle)] last:border-0 sm:last:border-b">
                     <span className="text-[var(--text-secondary)]">{entry.key}</span>
                     <span className="font-mono text-[var(--text-primary)] font-medium text-xs break-all text-right ml-4">{entry.value}</span>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+function RuntimeMetadataDisplay({ metadata }: { metadata: Record<string, string | number | boolean> }) {
+    const preferredOrder = [
+        'transcription_model', 'backend', 'device', 'compute_type', 'batch_size',
+        'timestamp_precision', 'chunk_size_seconds', 'chunk_overlap_seconds',
+        'decoder_guardrails', 'transcription_segments', 'word_segments',
+        'diarization_model', 'diarization_output', 'diarization_device',
+        'speaker_count', 'diarization_segments'
+    ];
+    const keys = Object.keys(metadata).sort((a, b) => {
+        const aIndex = preferredOrder.indexOf(a);
+        const bIndex = preferredOrder.indexOf(b);
+        return (aIndex === -1 ? preferredOrder.length : aIndex) - (bIndex === -1 ? preferredOrder.length : bIndex);
+    });
+
+    return (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm">
+            {keys.map(key => (
+                <div key={key} className="flex justify-between items-center py-1 border-b border-[var(--border-subtle)] last:border-0 sm:last:border-b">
+                    <span className="text-[var(--text-secondary)]">{formatParamKey(key)}</span>
+                    <span className="font-mono text-[var(--text-primary)] font-medium text-xs break-all text-right ml-4">{String(metadata[key])}</span>
                 </div>
             ))}
         </div>

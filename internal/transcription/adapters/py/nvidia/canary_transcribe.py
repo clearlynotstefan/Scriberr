@@ -154,6 +154,15 @@ def _transcribe_nemo(
 
     result_data = output[0]
     text = result_data.text
+
+    runtime_device = "unknown"
+    runtime_dtype = "unknown"
+    try:
+        parameter = next(asr_model.parameters())
+        runtime_device = str(parameter.device)
+        runtime_dtype = str(parameter.dtype).replace("torch.", "")
+    except (AttributeError, StopIteration):
+        pass
     word_timestamps = []
     segment_timestamps = []
     if timestamps and getattr(result_data, "timestamp", None):
@@ -171,6 +180,11 @@ def _transcribe_nemo(
         "model": "canary-1b-v2",
         "backend": "nemo",
         "timestamp_precision": "word" if timestamps else "none",
+        "runtime": {
+            "device": runtime_device,
+            "compute_type": runtime_dtype,
+            "batch_size": 1,
+        },
     }
 
     if include_confidence:
@@ -407,6 +421,17 @@ def _transcribe_transformers(
         "model": "canary-1b-v2",
         "backend": "transformers",
         "timestamp_precision": "chunk",
+        "runtime": {
+            "device": str(device),
+            "compute_type": str(dtype).replace("torch.", ""),
+            "batch_size": 1,
+            "chunk_size_seconds": TRANSFORMERS_MAX_CHUNK_SECONDS,
+            "chunk_overlap_seconds": TRANSFORMERS_CHUNK_OVERLAP_SECONDS,
+            "decoder_guardrails": (
+                f"repetition_penalty={TRANSFORMERS_GENERATION_KWARGS['repetition_penalty']},"
+                f"no_repeat_ngram_size={TRANSFORMERS_GENERATION_KWARGS['no_repeat_ngram_size']}"
+            ),
+        },
     }
     _write_output(output_data, output_file)
 

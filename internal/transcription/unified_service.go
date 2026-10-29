@@ -22,22 +22,34 @@ import (
 )
 
 const (
-	ModelWhisperX        = "whisperx"
-	ModelPyannote        = "pyannote"
-	ModelParakeet        = "parakeet"
-	ModelCanary          = "canary"
-	ModelSortformer      = "sortformer"
-	ModelOpenAI          = "openai_whisper"
-	ModelVoxtral         = "voxtral"
-	ModelDiarization31   = "pyannote/speaker-diarization-3.1"
-	FamilyNvidiaCanary   = "nvidia_canary"
-	FamilyNvidiaParakeet = "nvidia_parakeet"
-	FamilyWhisper        = "whisper"
-	FamilyOpenAI         = "openai"
-	FamilyMistralVoxtral = "mistral_voxtral"
-	DiarizeSortformer    = "nvidia_sortformer"
-	OutputFormatJSON     = "json"
+	ModelWhisperX             = "whisperx"
+	ModelPyannote             = "pyannote"
+	ModelParakeet             = "parakeet"
+	ModelCanary               = "canary"
+	ModelSortformer           = "sortformer"
+	ModelOpenAI               = "openai_whisper"
+	ModelVoxtral              = "voxtral"
+	ModelDiarization31        = "pyannote/speaker-diarization-3.1"
+	ModelDiarizationCommunity = "pyannote/speaker-diarization-community-1"
+	FamilyNvidiaCanary        = "nvidia_canary"
+	FamilyNvidiaParakeet      = "nvidia_parakeet"
+	FamilyWhisper             = "whisper"
+	FamilyOpenAI              = "openai"
+	FamilyMistralVoxtral      = "mistral_voxtral"
+	DiarizeSortformer         = "nvidia_sortformer"
+	OutputFormatJSON          = "json"
 )
+
+// IsSupportedDiarizationModel accepts the legacy Pyannote alias, both
+// explicitly selectable Pyannote pipelines, and Sortformer.
+func IsSupportedDiarizationModel(model string) bool {
+	switch model {
+	case ModelPyannote, ModelDiarization31, ModelDiarizationCommunity, DiarizeSortformer:
+		return true
+	default:
+		return false
+	}
+}
 
 // UnifiedTranscriptionService provides a unified interface for all transcription and diarization models
 type UnifiedTranscriptionService struct {
@@ -116,7 +128,7 @@ func (u *UnifiedTranscriptionService) ProcessJob(ctx context.Context, jobID stri
 	execution := &models.TranscriptionJobExecution{
 		TranscriptionJobID: jobID,
 		StartedAt:          startTime,
-		ActualParameters:   job.Parameters,
+		ActualParameters:   effectiveExecutionParameters(job.Parameters),
 		Status:             models.StatusProcessing,
 	}
 
@@ -194,7 +206,7 @@ func (u *UnifiedTranscriptionService) ProcessJob(ctx context.Context, jobID stri
 		}
 	} else {
 		// Process single track
-		if err := u.processSingleTrackJob(ctx, job); err != nil {
+		if err := u.processSingleTrackJob(ctx, job, execution); err != nil {
 			errMsg := fmt.Sprintf("single-track processing failed: %v", err)
 			updateExecutionStatus(models.StatusFailed, errMsg)
 			return fmt.Errorf("%s", errMsg)
@@ -210,7 +222,7 @@ func (u *UnifiedTranscriptionService) ProcessJob(ctx context.Context, jobID stri
 // processSingleTrackJob handles single audio file transcription
 //
 //nolint:gocyclo // Orchestrator function with multiple steps
-func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context, job *models.TranscriptionJob) error {
+func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context, job *models.TranscriptionJob, execution *models.TranscriptionJobExecution) error {
 	logger.Info("Processing single-track job", "job_id", job.ID, "model_family", job.Parameters.ModelFamily)
 
 	// Create processing context
@@ -331,6 +343,7 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 
 	// Save results to database
 	if transcriptResult != nil {
+		execution.RuntimeMetadata = buildRuntimeMetadata(transcriptResult, diarizationResult)
 		if err := u.saveTranscriptionResults(job.ID, transcriptResult); err != nil {
 			return fmt.Errorf("failed to save transcription results: %w", err)
 		}
@@ -396,7 +409,7 @@ func (u *UnifiedTranscriptionService) selectModels(params models.WhisperXParams)
 		switch params.DiarizeModel {
 		case DiarizeSortformer:
 			diarizationModelID = ModelSortformer
-		case ModelPyannote, ModelDiarization31:
+		case ModelPyannote, ModelDiarization31, ModelDiarizationCommunity:
 			diarizationModelID = ModelPyannote
 		default:
 			diarizationModelID = ModelPyannote // Default fallback
@@ -414,12 +427,12 @@ func (u *UnifiedTranscriptionService) selectModels(params models.WhisperXParams)
 
 // transcriptionIncludesDiarization checks if the transcription model already includes diarization
 func (u *UnifiedTranscriptionService) transcriptionIncludesDiarization(modelID string, params models.WhisperXParams) bool {
-	// WhisperX includes diarization when enabled
-	// WhisperX includes diarization when enabled
+	// Preserve the legacy WhisperX-integrated Pyannote 3.1 path. Community-1
+	// deliberately runs through Scriberr's separate adapter so every
+	// transcription family gets the same exclusive diarization output.
 	if modelID == ModelWhisperX {
 		if params.Diarize {
-			// Check if it's using nvidia_sortformer (which requires separate processing)
-			if params.DiarizeModel == DiarizeSortformer {
+			if params.DiarizeModel == DiarizeSortformer || params.DiarizeModel == ModelDiarizationCommunity {
 				return false
 			}
 			return true
@@ -656,6 +669,9 @@ func (u *UnifiedTranscriptionService) convertToCanaryParams(params models.Whispe
 // convertToWhisperXParams converts to WhisperX-specific parameters
 func (u *UnifiedTranscriptionService) convertToWhisperXParams(params models.WhisperXParams) map[string]interface{} {
 	// For WhisperX, we use the standard WhisperX parameters (no NVIDIA-specific ones)
+	embeddedDiarization := params.Diarize &&
+		params.DiarizeModel != DiarizeSortformer &&
+		params.DiarizeModel != ModelDiarizationCommunity
 	paramMap := map[string]interface{}{
 		// Core parameters
 		"model":        params.Model,
@@ -669,7 +685,7 @@ func (u *UnifiedTranscriptionService) convertToWhisperXParams(params models.Whis
 		"task": params.Task,
 
 		// Diarization
-		"diarize":       params.Diarize,
+		"diarize":       embeddedDiarization,
 		"diarize_model": params.DiarizeModel,
 
 		// Quality settings
@@ -715,10 +731,15 @@ func (u *UnifiedTranscriptionService) convertToWhisperXParams(params models.Whis
 
 // convertToPyannoteParams converts to PyAnnote-specific parameters
 func (u *UnifiedTranscriptionService) convertToPyannoteParams(params models.WhisperXParams) map[string]interface{} {
+	model := params.DiarizeModel
+	if model == "" || model == ModelPyannote {
+		model = ModelDiarizationCommunity
+	}
 	paramMap := map[string]interface{}{
 		"output_format":      OutputFormatJSON,
 		"auto_convert_audio": true,
 		"device":             "auto",
+		"model":              model,
 	}
 
 	if params.MinSpeakers != nil {
@@ -729,15 +750,6 @@ func (u *UnifiedTranscriptionService) convertToPyannoteParams(params models.Whis
 	}
 	if params.HfToken != nil {
 		paramMap["hf_token"] = *params.HfToken
-	}
-
-	// Map VAD thresholds to Pyannote segmentation parameters
-	// These control voice activity detection sensitivity for diarization
-	if params.VadOnset > 0 {
-		paramMap["segmentation_onset"] = params.VadOnset
-	}
-	if params.VadOffset > 0 {
-		paramMap["segmentation_offset"] = params.VadOffset
 	}
 
 	return paramMap
@@ -833,6 +845,10 @@ func (u *UnifiedTranscriptionService) mergeDiarizationWithTranscription(transcri
 	logger.Info("Merging diarization with transcription",
 		"transcript_segments", len(transcript.Segments),
 		"diarization_segments", len(diarization.Segments))
+
+	if diarization.Metadata["diarization_type"] == "exclusive" {
+		return u.mergeExclusiveDiarization(transcript, diarization)
+	}
 
 	// Create a copy of the transcript to avoid modifying the original
 	mergedTranscript := *transcript
